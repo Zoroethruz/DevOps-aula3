@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Hotel Booking - Reserva de Quartos</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { color: #1a4d2e; }
+  h2 { margin-top: 40px; border-bottom: 2px solid #eee; padding-bottom: 6px; }
+  form { display: grid; gap: 10px; max-width: 420px; margin-bottom: 20px; }
+  input, select, button { padding: 8px; font-size: 14px; }
+  button { background: #1a4d2e; color: white; border: none; cursor: pointer; border-radius: 4px; }
+  button:hover { background: #143d24; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
+  th { background: #f4f4f4; }
+  .msg { padding: 10px; border-radius: 4px; margin-top: 10px; }
+  .ok { background: #d4edda; color: #155724; }
+  .err { background: #f8d7da; color: #721c24; }
+</style>
+</head>
+<body>
+
+<h1>Hotel Booking</h1>
+
+<h2 id="room-form-title">Cadastrar quarto</h2>
+<form id="room-form">
+  <input type="hidden" id="room_edit_id" value="">
+  <input type="text" id="number" placeholder="Número do quarto (ex: 101)" required>
+  <select id="room_type" required>
+    <option value="standard">Standard</option>
+    <option value="deluxe">Deluxe</option>
+    <option value="suite">Suíte</option>
+  </select>
+  <input type="number" id="price_per_night" placeholder="Preço por noite" step="0.01" required>
+  <input type="number" id="capacity" placeholder="Capacidade (hóspedes)" value="2" required>
+  <div style="display:flex; gap:10px;">
+    <button type="submit" id="room-submit-btn" style="flex:1;">Cadastrar quarto</button>
+    <button type="button" id="room-cancel-edit" style="flex:0 0 auto; background:#888; display:none;">Cancelar edição</button>
+  </div>
+</form>
+<div id="room-msg"></div>
+
+<h2>Quartos cadastrados</h2>
+<form id="search-form" style="display:flex; flex-wrap:wrap; gap:10px; max-width:100%; align-items:center;">
+  <input type="text" id="search-q" placeholder="Buscar por número ou tipo" style="flex:1; min-width:180px;">
+  <select id="search-room-type" style="min-width:140px;">
+    <option value="">Todos os tipos</option>
+    <option value="standard">Standard</option>
+    <option value="deluxe">Deluxe</option>
+    <option value="suite">Suíte</option>
+  </select>
+  <input type="number" id="search-min-price" placeholder="Preço mín." step="0.01" style="width:110px;">
+  <input type="number" id="search-max-price" placeholder="Preço máx." step="0.01" style="width:110px;">
+  <input type="number" id="search-min-capacity" placeholder="Capacidade mín." style="width:130px;">
+  <label style="display:flex; align-items:center; gap:4px; font-size:14px;">
+    <input type="checkbox" id="search-only-active" checked> Apenas ativos
+  </label>
+  <button type="submit" style="width:auto;">Buscar</button>
+  <button type="button" id="search-clear" style="width:auto; background:#888;">Limpar</button>
+</form>
+<table>
+  <thead><tr><th>ID</th><th>Número</th><th>Tipo</th><th>Preço/noite</th><th>Capacidade</th><th>Status</th><th></th></tr></thead>
+  <tbody id="rooms-table"></tbody>
+</table>
+
+<h2 id="reservation-form-title">Fazer reserva</h2>
+<form id="reservation-form">
+  <input type="hidden" id="reservation_edit_id" value="">
+  <input type="number" id="room_id" placeholder="ID do quarto" required>
+  <input type="text" id="guest_name" placeholder="Nome do hóspede" required>
+  <input type="email" id="guest_email" placeholder="E-mail do hóspede" required>
+  <input type="date" id="check_in" required>
+  <input type="date" id="check_out" required>
+  <div style="display:flex; gap:10px;">
+    <button type="submit" id="reservation-submit-btn" style="flex:1;">Reservar</button>
+    <button type="button" id="reservation-cancel-edit" style="flex:0 0 auto; background:#888; display:none;">Cancelar edição</button>
+  </div>
+</form>
+<div id="reservation-msg"></div>
+
+<h2>Reservas</h2>
+<table>
+  <thead><tr><th>ID</th><th>Quarto</th><th>Hóspede</th><th>Check-in</th><th>Check-out</th><th>Status</th><th></th></tr></thead>
+  <tbody id="reservations-table"></tbody>
+</table>
+
+<script>
+const API = "";
+
+// FastAPI retorna `detail` como string (erros de negócio, ex: HTTPException)
+// OU como uma lista de objetos 
+// Essa função normaliza os dois formatos em uma string legível.
+function formatErrorDetail(err) {
+  const detail = err && err.detail;
+  if (!detail) return "Ocorreu um erro inesperado.";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => {
+      if (typeof d === "string") return d;
+      const field = Array.isArray(d.loc) ? d.loc[d.loc.length - 1] : "";
+      return field ? `${field}: ${d.msg}` : d.msg;
+    }).join(" | ");
+  }
+  return JSON.stringify(detail);
+}
+
+async function safeFetchJson(url, options) {
+  const res = await fetch(url, options);
+  let data = null;
+  try { data = await res.json(); } catch (_) { /* corpo vazio, ex: alguns DELETEs */ }
+  return { ok: res.ok, status: res.status, data };
+}
+
+function buildRoomsQuery() {
+  const params = new URLSearchParams();
+  const q = document.getElementById("search-q").value.trim();
+  const roomType = document.getElementById("search-room-type").value;
+  const minPrice = document.getElementById("search-min-price").value;
+  const maxPrice = document.getElementById("search-max-price").value;
+  const minCapacity = document.getElementById("search-min-capacity").value;
+  const onlyActive = document.getElementById("search-only-active").checked;
+
+  if (q) params.set("q", q);
+  if (roomType) params.set("room_type", roomType);
+  if (minPrice) params.set("min_price", minPrice);
+  if (maxPrice) params.set("max_price", maxPrice);
+  if (minCapacity) params.set("min_capacity", minCapacity);
+  params.set("only_active", onlyActive);
+  return params.toString();
+}
+
+async function loadRooms() {
+  const query = buildRoomsQuery();
+  const res = await fetch(`${API}/rooms?${query}`);
+  const rooms = await res.json();
+  const tbody = document.getElementById("rooms-table");
+  if (rooms.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#888;">Nenhum quarto encontrado</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rooms.map(r => `
+    <tr>
+      <td>${r.id}</td><td>${r.number}</td><td>${r.room_type}</td>
+      <td>R$ ${r.price_per_night.toFixed(2)}</td><td>${r.capacity}</td>
+      <td>${r.is_active ? "Ativo" : "Inativo"}</td>
+      <td style="white-space:nowrap;">
+        <button type="button" onclick="startEditRoom(${r.id}, '${r.number}', '${r.room_type}', ${r.price_per_night}, ${r.capacity})">Editar</button>
+        <button type="button" onclick="deleteRoom(${r.id})" style="background:#b02a2a;">Excluir</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("search-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  loadRooms();
+});
+
+document.getElementById("search-clear").addEventListener("click", () => {
+  document.getElementById("search-form").reset();
+  document.getElementById("search-only-active").checked = true;
+  loadRooms();
+});
+
+function startEditRoom(id, number, roomType, price, capacity) {
+  document.getElementById("room_edit_id").value = id;
+  document.getElementById("number").value = number;
+  document.getElementById("room_type").value = roomType;
+  document.getElementById("price_per_night").value = price;
+  document.getElementById("capacity").value = capacity;
+  document.getElementById("room-form-title").textContent = `Editando quarto #${id}`;
+  document.getElementById("room-submit-btn").textContent = "Salvar alterações";
+  document.getElementById("room-cancel-edit").style.display = "inline-block";
+  document.getElementById("room-form").scrollIntoView({ behavior: "smooth" });
+}
+
+function resetRoomForm() {
+  document.getElementById("room-form").reset();
+  document.getElementById("room_edit_id").value = "";
+  document.getElementById("room-form-title").textContent = "Cadastrar quarto";
+  document.getElementById("room-submit-btn").textContent = "Cadastrar quarto";
+  document.getElementById("room-cancel-edit").style.display = "none";
+}
+
+document.getElementById("room-cancel-edit").addEventListener("click", resetRoomForm);
+
+document.getElementById("room-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const editId = document.getElementById("room_edit_id").value;
+  const body = {
+    number: document.getElementById("number").value,
+    room_type: document.getElementById("room_type").value,
+    price_per_night: parseFloat(document.getElementById("price_per_night").value),
+    capacity: parseInt(document.getElementById("capacity").value),
+  };
+  const url = editId ? `${API}/rooms/${editId}` : `${API}/rooms`;
+  const method = editId ? "PUT" : "POST";
+  const { ok, data } = await safeFetchJson(url, {
+    method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  const msgDiv = document.getElementById("room-msg");
+  if (ok) {
+    msgDiv.innerHTML = `<div class="msg ok">Quarto ${editId ? "atualizado" : "cadastrado"} com sucesso!</div>`;
+    resetRoomForm();
+    loadRooms();
+  } else {
+    msgDiv.innerHTML = `<div class="msg err">Erro: ${formatErrorDetail(data)}</div>`;
+  }
+});
+
+async function deleteRoom(id) {
+  if (!confirm("Tem certeza que deseja excluir este quarto?")) return;
+  const { ok, data } = await safeFetchJson(`${API}/rooms/${id}`, { method: "DELETE" });
+  const msgDiv = document.getElementById("room-msg");
+  if (ok) {
+    msgDiv.innerHTML = `<div class="msg ok">${data.detail}</div>`;
+    loadRooms();
+  } else {
+    msgDiv.innerHTML = `<div class="msg err">Erro: ${formatErrorDetail(data)}</div>`;
+  }
+}
+
+async function loadReservations() {
+  const res = await fetch(`${API}/reservations`);
+  const reservations = await res.json();
+  const tbody = document.getElementById("reservations-table");
+  tbody.innerHTML = reservations.map(r => `
+    <tr>
+      <td>${r.id}</td><td>${r.room_id}</td><td>${r.guest_name}</td>
+      <td>${r.check_in}</td><td>${r.check_out}</td><td>${r.status}</td>
+      <td style="white-space:nowrap;">
+        ${r.status === "confirmed" ? `<button type="button" onclick='startEditReservation(${JSON.stringify(r)})'>Editar</button> <button onclick="cancelReservation(${r.id})">Cancelar</button>` : ""}
+      </td>
+    </tr>
+  `).join("");
+}
+
+function startEditReservation(r) {
+  document.getElementById("reservation_edit_id").value = r.id;
+  document.getElementById("room_id").value = r.room_id;
+  document.getElementById("room_id").disabled = true; // não é possível trocar o quarto de uma reserva existente
+  document.getElementById("guest_name").value = r.guest_name;
+  document.getElementById("guest_email").value = r.guest_email;
+  document.getElementById("check_in").value = r.check_in;
+  document.getElementById("check_out").value = r.check_out;
+  document.getElementById("reservation-form-title").textContent = `Editando reserva #${r.id}`;
+  document.getElementById("reservation-submit-btn").textContent = "Salvar alterações";
+  document.getElementById("reservation-cancel-edit").style.display = "inline-block";
+  document.getElementById("reservation-form").scrollIntoView({ behavior: "smooth" });
+}
+
+function resetReservationForm() {
+  document.getElementById("reservation-form").reset();
+  document.getElementById("reservation_edit_id").value = "";
+  document.getElementById("room_id").disabled = false;
+  document.getElementById("reservation-form-title").textContent = "Fazer reserva";
+  document.getElementById("reservation-submit-btn").textContent = "Reservar";
+  document.getElementById("reservation-cancel-edit").style.display = "none";
+}
+
+document.getElementById("reservation-cancel-edit").addEventListener("click", resetReservationForm);
+
+document.getElementById("reservation-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const editId = document.getElementById("reservation_edit_id").value;
+  const msgDiv = document.getElementById("reservation-msg");
+
+  if (editId) {
+    const body = {
+      guest_name: document.getElementById("guest_name").value,
+      guest_email: document.getElementById("guest_email").value,
+      check_in: document.getElementById("check_in").value,
+      check_out: document.getElementById("check_out").value,
+    };
+    const { ok, data } = await safeFetchJson(`${API}/reservations/${editId}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    });
+    if (ok) {
+      msgDiv.innerHTML = `<div class="msg ok">Reserva atualizada com sucesso!</div>`;
+      resetReservationForm();
+      loadReservations();
+    } else {
+      msgDiv.innerHTML = `<div class="msg err">Erro: ${formatErrorDetail(data)}</div>`;
+    }
+    return;
+  }
+
+  const body = {
+    room_id: parseInt(document.getElementById("room_id").value),
+    guest_name: document.getElementById("guest_name").value,
+    guest_email: document.getElementById("guest_email").value,
+    check_in: document.getElementById("check_in").value,
+    check_out: document.getElementById("check_out").value,
+  };
+  const { ok, data } = await safeFetchJson(`${API}/reservations`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  if (ok) {
+    msgDiv.innerHTML = `<div class="msg ok">Reserva confirmada!</div>`;
+    e.target.reset();
+    loadReservations();
+  } else {
+    msgDiv.innerHTML = `<div class="msg err">Erro: ${formatErrorDetail(data)}</div>`;
+  }
+});
+
+async function cancelReservation(id) {
+  await fetch(`${API}/reservations/${id}`, { method: "DELETE" });
+  loadReservations();
+}
+
+loadRooms();
+loadReservations();
+</script>
+
+</body>
+</html>
