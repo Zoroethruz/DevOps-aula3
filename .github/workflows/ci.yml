@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ codigo ]
+    branches: [ main, codigo ]
   pull_request:
-    branches: [ codigo ]
+    branches: [ main, codigo ]
 
 jobs:
   build-and-test:
