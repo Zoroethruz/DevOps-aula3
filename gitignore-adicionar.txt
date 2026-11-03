@@ -1,0 +1,5 @@
+# Adicione estas linhas ao .gitignore do repositório
+.env
+hotel.db
+__pycache__/
+venv/

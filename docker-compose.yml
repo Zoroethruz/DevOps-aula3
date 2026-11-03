@@ -1,0 +1,65 @@
+# Orquestração local — Hotel Booking API
+# Sobe a aplicação (FastAPI) integrada ao banco PostgreSQL.
+#
+# Uso:
+#   cp .env.example .env      # ajuste os valores se quiser
+#   docker compose up --build -d
+#   docker compose ps
+#   docker compose logs -f app
+#   docker compose down       # para tudo (mantém os dados)
+#   docker compose down -v    # para tudo e APAGA o volume do banco
+
+name: hotel-booking
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hotel-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:?defina POSTGRES_DB no .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # persistência dos dados
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Na fase de CD, esta tag passa a apontar para a imagem publicada no registry
+    # (ex.: ghcr.io/<org>/hotel-booking-api:1.0.0). Localmente, é só um nome.
+    image: ${APP_IMAGE:-hotel-booking-api:local}
+    container_name: hotel-app
+    restart: unless-stopped
+    environment:
+      # O código já lê DATABASE_URL (app/database.py); basta apontar para o Postgres.
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy        # só inicia a API quando o banco está pronto
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  pgdata:
+
+networks:
+  backend:
+    driver: bridge
