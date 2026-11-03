@@ -35,7 +35,7 @@ jobs:
 
       - name: Login no GHCR
         if: github.event_name == 'push'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Publicar imagem
         if: github.event_name == 'push'
