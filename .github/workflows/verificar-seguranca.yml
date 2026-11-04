@@ -1,0 +1,28 @@
+
+name: Verificar Seguranca
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar-arquivos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar projeto
+        uses: actions/checkout@v4
+
+      - name: Verificar arquivos sensiveis
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^|/)\.env($|\.)'; then
+            echo "ERRO: Arquivo .env versionado!"
+            exit 1
+          fi
+
+          echo "Nenhum arquivo .env versionado."
