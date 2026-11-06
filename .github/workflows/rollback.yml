@@ -1,0 +1,76 @@
+
+name: Simulacao de Rollback
+
+on:
+  push:
+    branches: ["código"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar projeto e historico
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Simular deploy e rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Preparar versao anterior
+          git rev-parse HEAD^ >/dev/null
+          git worktree add --detach \
+            "$RUNNER_TEMP/versao-anterior" HEAD^
+
+          # Criar duas imagens
+          docker build -t hotel-api:anterior \
+            "$RUNNER_TEMP/versao-anterior"
+
+          docker build -t hotel-api:atual .
+
+          # Configurar banco de teste
+          export POSTGRES_USER=hotel
+          export POSTGRES_DB=hotel
+          export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          export APP_PORT=8000
+
+          trap 'docker compose down' EXIT
+
+          # Executar versao atual
+          export APP_IMAGE=hotel-api:atual
+          docker compose up -d --no-build
+
+          echo "Verificando versao atual"
+          for i in {1..15}; do
+            if curl -fsS http://localhost:8000/health; then
+              break
+            fi
+            if [ "$i" -eq 15 ]; then exit 1; fi
+            sleep 5
+          done
+
+          # Simular rollback
+          echo "Iniciando rollback"
+          export APP_IMAGE=hotel-api:anterior
+
+          docker compose up -d --no-build \
+            --no-deps --force-recreate app
+
+          echo "Verificando versao restaurada"
+          for i in {1..15}; do
+            if curl -fsS http://localhost:8000/health; then
+              echo "ROLLBACK REALIZADO COM SUCESSO"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          docker compose logs app
+          exit 1
